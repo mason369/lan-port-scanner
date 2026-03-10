@@ -44,29 +44,42 @@ class ModernScannerGUI:
         self._center_window()
 
     def _setup_styles(self):
-        """设置样式"""
+        """设置样式 - 跨平台一致性"""
         style = ttk.Style()
-        style.theme_use('clam')
 
-        # 配置按钮样式
+        # 根据平台选择最佳主题
+        if sys.platform == 'win32':
+            try:
+                style.theme_use('vista')  # Windows 原生主题
+            except:
+                style.theme_use('clam')
+        elif sys.platform == 'darwin':
+            try:
+                style.theme_use('aqua')  # macOS 原生主题
+            except:
+                style.theme_use('clam')
+        else:
+            style.theme_use('clam')  # Linux 使用 clam 主题
+
+        # 配置按钮样式 - 跨平台兼容
         style.configure('Primary.TButton',
                        background=self.colors['primary'],
                        foreground='white',
                        borderwidth=0,
                        focuscolor='none',
-                       padding=10)
+                       padding=(10, 5))
 
         style.configure('Success.TButton',
                        background=self.colors['success'],
                        foreground='white',
                        borderwidth=0,
-                       padding=10)
+                       padding=(10, 5))
 
         style.configure('Danger.TButton',
                        background=self.colors['danger'],
                        foreground='white',
                        borderwidth=0,
-                       padding=10)
+                       padding=(10, 5))
 
         # 配置标签框样式
         style.configure('Card.TLabelframe',
@@ -77,6 +90,23 @@ class ModernScannerGUI:
         style.configure('Card.TLabelframe.Label',
                        background=self.colors['card'],
                        font=('Arial', 10, 'bold'))
+
+        # 配置 Treeview 样式 - 确保跨平台一致
+        style.configure('Treeview',
+                       background='white',
+                       foreground='black',
+                       rowheight=25,
+                       fieldbackground='white')
+
+        style.configure('Treeview.Heading',
+                       font=('Arial', 9, 'bold'))
+
+        style.map('Treeview',
+                 background=[('selected', self.colors['primary'])])
+
+        # 配置进度条样式
+        style.configure('TProgressbar',
+                       background=self.colors['primary'])
 
     def _center_window(self):
         """窗口居中显示"""
