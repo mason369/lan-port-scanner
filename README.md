@@ -51,7 +51,32 @@
 - Python 3.7 或更高版本
 - pip 包管理器
 
-### 安装步骤
+### 一键启动（推荐）
+
+**Windows 用户：**
+```bash
+# 双击运行 运行.bat
+# 或在命令行中执行
+运行.bat
+```
+
+**Linux/macOS 用户：**
+```bash
+# 添加执行权限
+chmod +x 运行.sh
+
+# 运行脚本
+./运行.sh
+```
+
+**自动化功能：**
+- ✅ 自动检测 Python 环境
+- ✅ 自动创建虚拟环境
+- ✅ 自动安装依赖包
+- ✅ 自动启动图形界面
+- ✅ 错误提示和解决方案
+
+### 手动安装
 
 1. 克隆仓库
 ```bash
@@ -59,9 +84,25 @@ git clone https://github.com/mason369/lan-port-scanner.git
 cd lan-port-scanner
 ```
 
-2. 安装依赖
+2. 创建虚拟环境（可选但推荐）
+```bash
+# Windows
+python -m venv venv
+venv\Scripts\activate
+
+# Linux/macOS
+python3 -m venv venv
+source venv/bin/activate
+```
+
+3. 安装依赖
 ```bash
 pip install -r requirements.txt
+```
+
+4. 启动应用
+```bash
+python app.py
 ```
 
 ---
@@ -276,7 +317,12 @@ lan-port-scanner/
 ├── gui.py              # 基础图形界面
 ├── cli.py              # 命令行界面
 ├── examples.py         # 使用示例
+├── 运行.bat            # Windows 一键启动脚本
+├── 运行.sh             # Linux/macOS 一键启动脚本
+├── 启动.bat            # Windows 简易启动脚本
+├── 启动.sh             # Linux/macOS 简易启动脚本
 ├── requirements.txt    # 依赖包列表
+├── 快速入门.md         # 快速入门指南
 ├── README.md           # 项目文档
 ├── LICENSE             # Apache 2.0 许可证
 └── .gitignore          # Git 忽略文件
