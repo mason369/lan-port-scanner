@@ -61,9 +61,17 @@ echo -e "${GREEN}[✓] 虚拟环境已激活${NC}"
 echo ""
 
 # 检查依赖是否安装
-if ! python -c "import tabulate" &> /dev/null; then
+if ! python -c "import PyQt6" &> /dev/null; then
     echo -e "${BLUE}[信息] 正在安装依赖包...${NC}"
     echo ""
+
+    # 检查并安装系统依赖
+    if command -v apt-get &> /dev/null; then
+        echo "检测到 Debian/Ubuntu 系统，安装系统依赖..."
+        sudo apt-get update
+        sudo apt-get install -y python3-pyqt6 libxcb-xinerama0 libxcb-cursor0 || true
+    fi
+
     python -m pip install --upgrade pip
     pip install -r requirements.txt
     if [ $? -ne 0 ]; then
@@ -92,10 +100,10 @@ fi
 
 # 启动应用
 echo "========================================"
-echo "  正在启动图形界面..."
+echo "  正在启动图形界面 (PyQt6)..."
 echo "========================================"
 echo ""
-python app.py
+python app_qt.py
 
 # 检查退出状态
 if [ $? -ne 0 ]; then

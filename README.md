@@ -47,11 +47,34 @@
 
 ## 安装
 
-### 前置要求
+### 方式 1: 下载可执行文件（推荐，无需 Python）
+
+**Windows 用户：**
+1. 访问 [Releases 页面](https://github.com/mason369/lan-port-scanner/releases)
+2. 下载最新版本的 `LAN-Port-Scanner.exe`
+3. 双击运行，无需安装 Python
+
+**Linux 用户：**
+1. 访问 [Releases 页面](https://github.com/mason369/lan-port-scanner/releases)
+2. 下载最新版本的 `lan-port-scanner`
+3. 添加执行权限：`chmod +x lan-port-scanner`
+4. 运行：`./lan-port-scanner`
+
+**优势：**
+- ✅ 无需安装 Python
+- ✅ 无需安装依赖
+- ✅ 开箱即用
+- ✅ 单文件，便于分发
+
+### 方式 2: 从源码运行
+
+#### 前置要求
 - Python 3.7 或更高版本
 - pip 包管理器
 
 ### 一键启动（推荐）
+
+**从源码运行：**
 
 **Windows 用户：**
 ```bash

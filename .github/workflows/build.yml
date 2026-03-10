@@ -1,0 +1,137 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6 tabulate pyinstaller
+
+      - name: Build Windows executable
+        run: |
+          pyinstaller --name="LAN-Port-Scanner" --onefile --windowed --icon=NONE --add-data "scanner.py;." app_qt.py
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-executable
+          path: dist/LAN-Port-Scanner.exe
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pyqt6 libxcb-xinerama0 libxcb-cursor0
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6 tabulate pyinstaller
+
+      - name: Build Linux executable
+        run: |
+          pyinstaller --name="lan-port-scanner" --onefile --add-data "scanner.py:." app_qt.py
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-executable
+          path: dist/lan-port-scanner
+
+  create-release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-executable
+          path: ./artifacts/windows
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-executable
+          path: ./artifacts/linux
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ./artifacts/windows/LAN-Port-Scanner.exe
+            ./artifacts/linux/lan-port-scanner
+          body: |
+            ## 局域网端口扫描器 / LAN Port Scanner
+
+            ### 下载说明 / Download Instructions
+
+            **Windows 用户:**
+            - 下载 `LAN-Port-Scanner.exe`
+            - 双击运行，无需安装 Python
+
+            **Linux 用户:**
+            - 下载 `lan-port-scanner`
+            - 添加执行权限: `chmod +x lan-port-scanner`
+            - 运行: `./lan-port-scanner`
+
+            ### 功能特性 / Features
+            - 🖥️ PyQt6 现代化图形界面
+            - 🚀 异步高性能扫描
+            - 🕵️ 隐蔽扫描技术
+            - 🔍 服务识别和 Banner 抓取
+            - 🌐 跨平台支持
+
+            ### 系统要求 / System Requirements
+            - Windows 7/8/10/11 (64-bit)
+            - Linux (Ubuntu 20.04+, Debian 11+, etc.)
+            - 无需安装 Python / No Python installation required
+
+            ### 使用方法 / Usage
+            1. 下载对应平台的可执行文件
+            2. 直接运行
+            3. 配置扫描参数
+            4. 开始扫描
+
+            ### 源码运行 / Run from Source
+            ```bash
+            pip install PyQt6 tabulate
+            python app_qt.py
+            ```
+
+            ### 注意事项 / Notes
+            - 仅供合法的网络管理和安全研究使用
+            - 请遵守当地法律法规
+            - For legal network management and security research only
+
+            ---
+
+            **完整文档:** https://github.com/mason369/lan-port-scanner
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
