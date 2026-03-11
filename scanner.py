@@ -1,247 +1,319 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-局域网端口扫描器 - 主扫描模块
-支持隐蔽扫描、服务识别和异步高性能扫描
+局域网端口扫描器 - 高性能扫描引擎
+支持主机发现、并发扫描、服务识别
 """
 
 import asyncio
 import socket
 import random
+import struct
 import time
-from typing import List, Dict, Tuple, Optional
-from dataclasses import dataclass
+from typing import List, Dict, Tuple, Optional, Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 
 
 @dataclass
 class ScanResult:
-    """扫描结果数据类"""
+    """扫描结果"""
     ip: str
     port: int
     state: str
     service: str
     banner: str = ""
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        if self.timestamp is None:
-            self.timestamp = datetime.now()
+    timestamp: datetime = field(default_factory=datetime.now)
 
 
 class ServiceDetector:
-    """服务检测器 - 识别端口上运行的服务"""
+    """服务检测器"""
 
-    # 常见端口到服务的映射
     COMMON_PORTS = {
         20: "FTP-DATA", 21: "FTP", 22: "SSH", 23: "Telnet",
-        25: "SMTP", 53: "DNS", 80: "HTTP", 110: "POP3",
-        143: "IMAP", 443: "HTTPS", 445: "SMB", 3306: "MySQL",
-        3389: "RDP", 5432: "PostgreSQL", 5900: "VNC", 6379: "Redis",
-        8080: "HTTP-Proxy", 8443: "HTTPS-Alt", 27017: "MongoDB",
-        9200: "Elasticsearch", 11211: "Memcached", 50000: "SAP"
+        25: "SMTP", 53: "DNS", 67: "DHCP", 68: "DHCP",
+        69: "TFTP", 80: "HTTP", 110: "POP3", 111: "RPC",
+        119: "NNTP", 123: "NTP", 135: "MSRPC", 137: "NetBIOS",
+        138: "NetBIOS", 139: "NetBIOS", 143: "IMAP", 161: "SNMP",
+        179: "BGP", 389: "LDAP", 443: "HTTPS", 445: "SMB",
+        465: "SMTPS", 514: "Syslog", 515: "LPD", 587: "SMTP",
+        631: "IPP", 636: "LDAPS", 993: "IMAPS", 995: "POP3S",
+        1080: "SOCKS", 1433: "MSSQL", 1521: "Oracle",
+        1723: "PPTP", 1883: "MQTT", 2049: "NFS",
+        2181: "ZooKeeper", 3000: "Grafana", 3306: "MySQL",
+        3389: "RDP", 4369: "EPMD", 5432: "PostgreSQL",
+        5672: "AMQP", 5900: "VNC", 5984: "CouchDB",
+        6379: "Redis", 6443: "K8s-API", 7001: "WebLogic",
+        8000: "HTTP-Alt", 8008: "HTTP-Alt", 8080: "HTTP-Proxy",
+        8443: "HTTPS-Alt", 8888: "HTTP-Alt", 9090: "Prometheus",
+        9092: "Kafka", 9200: "Elasticsearch", 9300: "ES-Transport",
+        11211: "Memcached", 15672: "RabbitMQ", 27017: "MongoDB",
+        50000: "SAP", 50070: "HDFS",
     }
 
-    # 服务特征指纹
-    SERVICE_SIGNATURES = {
+    SERVICE_PROBES = {
         b"SSH-": "SSH",
-        b"220": "SMTP/FTP",
+        b"220 ": "SMTP/FTP",
+        b"220-": "FTP",
         b"HTTP/": "HTTP",
         b"+OK": "POP3",
         b"* OK": "IMAP",
         b"mysql": "MySQL",
+        b"\x00\x00\x00": "MySQL",
         b"Redis": "Redis",
+        b"-ERR": "Redis",
         b"MongoDB": "MongoDB",
-        b"Elasticsearch": "Elasticsearch"
+        b"Elasticsearch": "Elasticsearch",
+        b"RFB ": "VNC",
+        b"\x03\x00": "RDP",
+        b"AMQP": "AMQP",
     }
 
     @classmethod
     def get_service_name(cls, port: int) -> str:
-        """根据端口号获取服务名称"""
-        return cls.COMMON_PORTS.get(port, f"Unknown-{port}")
+        return cls.COMMON_PORTS.get(port, "Unknown")
 
     @classmethod
-    async def detect_service(cls, ip: str, port: int, timeout: float = 2.0) -> Tuple[str, str]:
-        """
-        通过 banner 抓取检测服务
-        返回: (服务名称, banner内容)
-        """
+    async def grab_banner(cls, ip: str, port: int, timeout: float = 1.5) -> Tuple[str, str]:
+        """单次连接完成端口探测 + banner 抓取 + 服务识别"""
         service = cls.get_service_name(port)
         banner = ""
-
         try:
             reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(ip, port),
-                timeout=timeout
+                asyncio.open_connection(ip, port), timeout=timeout
             )
-
-            # 尝试读取 banner
             try:
-                data = await asyncio.wait_for(reader.read(1024), timeout=1.0)
-                banner = data.decode('utf-8', errors='ignore').strip()
-
-                # 根据 banner 特征识别服务
-                for signature, svc_name in cls.SERVICE_SIGNATURES.items():
-                    if signature in data:
-                        service = svc_name
-                        break
+                data = await asyncio.wait_for(reader.read(1024), timeout=0.8)
+                if data:
+                    banner = data.decode('utf-8', errors='replace').strip()[:200]
+                    for sig, svc in cls.SERVICE_PROBES.items():
+                        if sig in data:
+                            service = svc
+                            break
             except asyncio.TimeoutError:
                 pass
-
             writer.close()
             await writer.wait_closed()
-
         except Exception:
             pass
-
         return service, banner
 
 
 class StealthScanner:
-    """隐蔽扫描器 - 实现反检测扫描技术"""
+    """高性能隐蔽扫描器"""
 
     def __init__(self,
-                 max_concurrent: int = 100,
-                 timeout: float = 1.0,
-                 delay_range: Tuple[float, float] = (0.01, 0.1),
-                 randomize: bool = True):
-        """
-        初始化扫描器
-
-        Args:
-            max_concurrent: 最大并发连接数
-            timeout: 连接超时时间（秒）
-            delay_range: 随机延迟范围（秒）
-            randomize: 是否随机化扫描顺序
-        """
+                 max_concurrent: int = 500,
+                 timeout: float = 0.6,
+                 delay_range: Tuple[float, float] = (0.001, 0.01),
+                 randomize: bool = True,
+                 on_result: Optional[Callable] = None,
+                 on_progress: Optional[Callable] = None):
         self.max_concurrent = max_concurrent
         self.timeout = timeout
         self.delay_range = delay_range
         self.randomize = randomize
-        self.semaphore = asyncio.Semaphore(max_concurrent)
+        self.on_result = on_result
+        self.on_progress = on_progress
         self.results: List[ScanResult] = []
+        self._stopped = False
 
-    async def _scan_port(self, ip: str, port: int) -> Optional[ScanResult]:
-        """
-        扫描单个端口
-        使用异步 socket 连接测试端口状态
-        """
-        async with self.semaphore:
-            # 添加随机延迟以避免检测
-            if self.randomize:
-                delay = random.uniform(*self.delay_range)
-                await asyncio.sleep(delay)
+    def stop(self):
+        self._stopped = True
+
+    async def _ping_host(self, ip: str, ports: List[int] = None) -> bool:
+        """快速探测主机是否存活（并发 TCP ping 多个端口）"""
+        if self._stopped:
+            return False
+        probe_ports = ports or [80, 443, 22, 445, 3389, 8080, 135, 139]
+
+        async def try_port(port):
+            try:
+                conn = asyncio.open_connection(ip, port)
+                reader, writer = await asyncio.wait_for(conn, timeout=0.25)
+                writer.close()
+                await writer.wait_closed()
+                return True
+            except (asyncio.TimeoutError, ConnectionRefusedError):
+                return True
+            except OSError:
+                return False
+
+        tasks = [try_port(p) for p in probe_ports[:6]]
+        results = await asyncio.gather(*tasks)
+        return any(results)
+
+    async def discover_hosts(self, network_prefix: str,
+                            host_range: Tuple[int, int] = (1, 254)) -> List[str]:
+        """高并发发现活跃主机"""
+        start, end = host_range
+        all_ips = [f"{network_prefix}.{i}" for i in range(start, end + 1)]
+
+        if self.randomize:
+            random.shuffle(all_ips)
+
+        sem = asyncio.Semaphore(100)
+        alive = []
+
+        async def check(ip):
+            async with sem:
+                if await self._ping_host(ip):
+                    alive.append(ip)
+
+        tasks = [check(ip) for ip in all_ips]
+        total = len(tasks)
+
+        # 一次性全部并发
+        batch_size = 100
+        for i in range(0, total, batch_size):
+            if self._stopped:
+                break
+            batch = tasks[i:i + batch_size]
+            await asyncio.gather(*batch)
+            if self.on_progress:
+                done = min(i + batch_size, total)
+                self.on_progress(f"主机发现: {done}/{total}，已发现 {len(alive)} 个活跃主机")
+
+        return alive
+
+    async def _scan_port(self, ip: str, port: int, sem: asyncio.Semaphore) -> Optional[ScanResult]:
+        """扫描单个端口 - 单次连接完成探测和识别"""
+        if self._stopped:
+            return None
+
+        async with sem:
+            if self.randomize and self.delay_range[1] > 0:
+                await asyncio.sleep(random.uniform(*self.delay_range))
 
             try:
-                # 尝试建立 TCP 连接
                 conn = asyncio.open_connection(ip, port)
                 reader, writer = await asyncio.wait_for(conn, timeout=self.timeout)
 
-                # 端口开放，进行服务检测
-                service, banner = await ServiceDetector.detect_service(ip, port, self.timeout)
+                service = ServiceDetector.get_service_name(port)
+                banner = ""
+                try:
+                    data = await asyncio.wait_for(reader.read(1024), timeout=0.4)
+                    if data:
+                        banner = data.decode('utf-8', errors='replace').strip()[:200]
+                        for sig, svc in ServiceDetector.SERVICE_PROBES.items():
+                            if sig in data:
+                                service = svc
+                                break
+                except asyncio.TimeoutError:
+                    pass
 
                 writer.close()
-                await writer.wait_closed()
+                try:
+                    await asyncio.wait_for(writer.wait_closed(), timeout=0.2)
+                except (asyncio.TimeoutError, OSError):
+                    pass
 
-                return ScanResult(
-                    ip=ip,
-                    port=port,
-                    state="open",
-                    service=service,
-                    banner=banner[:100]  # 限制 banner 长度
+                result = ScanResult(
+                    ip=ip, port=port, state="open",
+                    service=service, banner=banner
                 )
+                self.results.append(result)
+
+                if self.on_result:
+                    self.on_result(result)
+
+                return result
 
             except (asyncio.TimeoutError, ConnectionRefusedError, OSError):
-                # 端口关闭或被过滤
                 return None
 
     async def scan_host(self, ip: str, ports: List[int]) -> List[ScanResult]:
-        """
-        扫描单个主机的多个端口
-
-        Args:
-            ip: 目标 IP 地址
-            ports: 要扫描的端口列表
-
-        Returns:
-            开放端口的扫描结果列表
-        """
-        # 随机化端口扫描顺序
+        """扫描单个主机"""
         if self.randomize:
             ports = ports.copy()
             random.shuffle(ports)
 
-        # 并发扫描所有端口
-        tasks = [self._scan_port(ip, port) for port in ports]
+        sem = asyncio.Semaphore(self.max_concurrent)
+        tasks = [self._scan_port(ip, port, sem) for port in ports]
         results = await asyncio.gather(*tasks)
-
-        # 过滤掉 None 结果（关闭的端口）
-        open_ports = [r for r in results if r is not None]
-        self.results.extend(open_ports)
-
-        return open_ports
+        return [r for r in results if r is not None]
 
     async def scan_network(self, network_prefix: str, ports: List[int],
                           host_range: Tuple[int, int] = (1, 254)) -> Dict[str, List[ScanResult]]:
-        """
-        扫描整个网络段
+        """扫描整个网络 - 先发现主机再全并发扫描"""
+        self._stopped = False
+        self.results.clear()
 
-        Args:
-            network_prefix: 网络前缀，如 "192.168.1"
-            ports: 要扫描的端口列表
-            host_range: 主机范围，默认 1-254
+        # 阶段 1: 主机发现
+        if self.on_progress:
+            self.on_progress("阶段 1/2: 正在发现活跃主机...")
 
-        Returns:
-            字典，键为 IP 地址，值为该主机的扫描结果列表
-        """
-        start_host, end_host = host_range
-        hosts = [f"{network_prefix}.{i}" for i in range(start_host, end_host + 1)]
+        alive_hosts = await self.discover_hosts(network_prefix, host_range)
 
-        # 随机化主机扫描顺序
+        if not alive_hosts:
+            if self.on_progress:
+                self.on_progress("未发现活跃主机，尝试直接扫描...")
+            start, end = host_range
+            alive_hosts = [f"{network_prefix}.{i}" for i in range(start, end + 1)]
+
+        if self.on_progress:
+            self.on_progress(f"阶段 2/2: 扫描 {len(alive_hosts)} 个主机的 {len(ports)} 个端口...")
+
+        # 阶段 2: 全并发扫描
+        sem = asyncio.Semaphore(self.max_concurrent)
+
+        all_tasks = []
+        for host in alive_hosts:
+            scan_ports = ports.copy()
+            if self.randomize:
+                random.shuffle(scan_ports)
+            for port in scan_ports:
+                all_tasks.append(self._scan_port(host, port, sem))
+
         if self.randomize:
-            random.shuffle(hosts)
+            random.shuffle(all_tasks)
 
+        total = len(all_tasks)
+        batch_size = self.max_concurrent * 3
+        completed = 0
+
+        for i in range(0, total, batch_size):
+            if self._stopped:
+                break
+            batch = all_tasks[i:i + batch_size]
+            await asyncio.gather(*batch)
+            completed = min(i + batch_size, total)
+            if self.on_progress:
+                pct = int(completed / total * 100)
+                found = len(self.results)
+                self.on_progress(f"扫描进度: {pct}% ({completed}/{total})，已发现 {found} 个开放端口")
+
+        # 整理结果
         network_results = {}
+        for result in self.results:
+            if result.ip not in network_results:
+                network_results[result.ip] = []
+            network_results[result.ip].append(result)
 
-        for host in hosts:
-            results = await self.scan_host(host, ports)
-            if results:
-                network_results[host] = results
+        for ip in network_results:
+            network_results[ip].sort(key=lambda r: r.port)
 
         return network_results
 
     def get_results(self) -> List[ScanResult]:
-        """获取所有扫描结果"""
         return self.results
 
     def clear_results(self):
-        """清空扫描结果"""
         self.results.clear()
 
 
 def get_local_network() -> str:
-    """
-    自动获取本机所在的局域网网段
-
-    Returns:
-        网络前缀，如 "192.168.1"
-    """
+    """自动获取本机所在的局域网网段"""
     try:
-        # 创建一个 UDP socket 连接到外部地址（不实际发送数据）
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         local_ip = s.getsockname()[0]
         s.close()
-
-        # 提取网络前缀（前三段）
-        network_prefix = '.'.join(local_ip.split('.')[:3])
-        return network_prefix
+        return '.'.join(local_ip.split('.')[:3])
     except Exception:
-        # 默认返回常见的局域网段
         return "192.168.1"
 
 
-# 常用端口列表
 COMMON_PORTS = [
     21, 22, 23, 25, 53, 80, 110, 143, 443, 445,
     3306, 3389, 5432, 5900, 6379, 8080, 8443, 27017
@@ -257,51 +329,3 @@ TOP_100_PORTS = [
     8000, 8008, 8009, 8080, 8081, 8443, 8888, 9100, 9999, 10000, 32768, 49152,
     49153, 49154, 49155, 49156, 49157
 ]
-
-
-if __name__ == "__main__":
-    # 示例用法
-    async def main():
-        print("局域网端口扫描器")
-        print("=" * 50)
-
-        # 获取本地网络
-        network = get_local_network()
-        print(f"检测到本地网络: {network}.0/24")
-
-        # 创建扫描器
-        scanner = StealthScanner(
-            max_concurrent=50,
-            timeout=1.0,
-            delay_range=(0.01, 0.05),
-            randomize=True
-        )
-
-        print(f"\n开始扫描常用端口...")
-        start_time = time.time()
-
-        # 扫描网络（示例：只扫描 .1 到 .10）
-        results = await scanner.scan_network(
-            network_prefix=network,
-            ports=COMMON_PORTS,
-            host_range=(1, 10)
-        )
-
-        elapsed = time.time() - start_time
-
-        # 显示结果
-        print(f"\n扫描完成！耗时: {elapsed:.2f} 秒")
-        print("=" * 50)
-
-        if results:
-            for ip, ports in results.items():
-                print(f"\n主机: {ip}")
-                print(f"{'端口':<8} {'状态':<8} {'服务':<20} {'Banner'}")
-                print("-" * 70)
-                for result in ports:
-                    banner_preview = result.banner[:40] if result.banner else ""
-                    print(f"{result.port:<8} {result.state:<8} {result.service:<20} {banner_preview}")
-        else:
-            print("未发现开放端口")
-
-    asyncio.run(main())
